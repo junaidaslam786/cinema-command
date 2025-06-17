@@ -90,3 +90,14 @@ def load_pref(key, default=None):
             pass
     
     return default
+
+def update_model_preference():
+    """Force update model preference to Claude 4"""
+    current_model = load_pref("model", "")
+        
+        # If current model is Claude 3, update it to Claude 4
+    if "claude-3" in current_model:
+        save_pref("model", "claude-4-sonnet-20240229")
+        log_line("info", f"Updated model from {current_model} to claude-4-sonnet-20240229")
+        
+    return load_pref("model", "claude-4-sonnet-20240229")

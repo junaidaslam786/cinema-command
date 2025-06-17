@@ -2,11 +2,13 @@ import c4d
 from c4d.gui import GeDialog
 import threading
 import time
-from .api_handler import call_claude
+from .api_handler import call_claude, get_available_models
 from .agent import Agent
 from .logging import log_line
 from .mcp_executor import execute_commands
 from .models.response import AIResponse, ProcessResult
+from .preferences import load_pref, save_pref
+
 
 class MainDialog(GeDialog):
     # UI element IDs
@@ -59,10 +61,26 @@ class MainDialog(GeDialog):
         
     def InitValues(self):
         """Initialize dialog values"""
-        # Set initial values
-        self.SetString(self.RESULT_TEXT, "Enter a prompt and click Run to generate and execute commands.")
-        self.SetString(self.PROMPT_TEXT, "")
-        return True
+        try:
+            # Import preferences
+            from .preferences import load_pref
+            
+            # Check if API key is configured
+            api_key = load_pref("claude_api_key", "")
+            
+            # Use RESULT_TEXT instead of STATUS_TEXT if it exists
+            if hasattr(self, 'RESULT_TEXT'):
+                if api_key:
+                    self.SetString(self.RESULT_TEXT, "API key configured. Ready to process commands.")
+                else:
+                    self.SetString(self.RESULT_TEXT, "No API key found. Please configure in Settings.")
+            
+            return True
+        except Exception as e:
+            import traceback
+            print(f"Error in InitValues: {str(e)}")
+            traceback.print_exc()
+            return False
     
     def set_busy(self, state):
         """Set the busy state of the dialog"""
@@ -98,8 +116,16 @@ class MainDialog(GeDialog):
                 log_line("info", "No rules matched, calling API")
                 api_result = call_claude(prompt)
                 
-                # Create AI response object
-                completion = api_result.get("completion", "")
+                # FIX: Extract completion text correctly from Messages API
+                if "content" in api_result and isinstance(api_result["content"], list):
+                    # Extract text from content blocks
+                    text_blocks = [block["text"] for block in api_result["content"] if block.get("type") == "text"]
+                    completion = "\n".join(text_blocks)
+                else:
+                    # Fallback to old format
+                    completion = api_result.get("completion", "")
+                
+                log_line("debug", f"Extracted completion text length: {len(completion)}")
                 
                 # Process response for commands
                 commands = self.agent.parse_commands_from_ai(completion)
@@ -186,8 +212,16 @@ class MainDialog(GeDialog):
                     log_line("info", "No rules matched, calling API")
                     api_result = call_claude(prompt)
                     
-                    # Create AI response object
-                    completion = api_result.get("completion", "")
+                    # FIX: Extract completion text correctly from Messages API
+                    if "content" in api_result and isinstance(api_result["content"], list):
+                        # Extract text from content blocks
+                        text_blocks = [block["text"] for block in api_result["content"] if block.get("type") == "text"]
+                        completion = "\n".join(text_blocks)
+                    else:
+                        # Fallback to old format
+                        completion = api_result.get("completion", "")
+                    
+                    log_line("debug", f"Extracted completion text length: {len(completion)}")
                     
                     c4d.StatusSetBar(60)  # Update to 60%
                     c4d.StatusSetText("Processing AI response...")

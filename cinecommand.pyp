@@ -4,6 +4,8 @@ from c4d import plugins
 import os
 import sys
 
+
+
 # Add the plugin directory to Python path
 __file__ = os.path.realpath(__file__)
 plugin_dir = os.path.dirname(__file__)
@@ -67,3 +69,5 @@ if __name__ == "__main__":
         f"Open {PLUGIN_NAME} Preferences",
         CineCommandSettings()  # Use the class instance instead of lambda
     )
+
+   

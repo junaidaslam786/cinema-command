@@ -8,16 +8,17 @@ from .logging import log_line
 from .api_handler import call_claude  # Import call_claude function
 from .mcp_executor import execute_commands  # Import execute_commands function
 
+
 class SettingsDialog(GeDialog):
-    # IDs for the UI elements
+   # IDs for the UI elements
     GROUP_TABS = 1000
     TAB_GENERAL = 1001
     TAB_API = 1002
     TAB_LOGGING = 1003
     TAB_ADVANCED = 1004
     
-    # General tab
     MODEL_SELECTOR = 2001
+    RULES_ENABLE = 2002
     
     # API tab
     API_KEY = 2100
@@ -32,14 +33,14 @@ class SettingsDialog(GeDialog):
     RULES_EDITOR = 2300
     RELOAD_RULES = 2301
     PYTHON_ENABLE = 2302
+    DEBUG_MODE = 2303  # Add this line
     
     # Dialog buttons
     BTN_OK = 3001
     BTN_CANCEL = 3002
     
     API_TEST_RESULT = 2102  # For displaying API test results
-    BTN_SAVE_RULES = 2303   # Save rules button
-
+    BTN_SAVE_RULES = 2304   # Save rules button (changed from 2303)
 
     def __init__(self):
         super(SettingsDialog, self).__init__()
@@ -138,31 +139,39 @@ class SettingsDialog(GeDialog):
         if hasattr(self, '_initialized') and self._initialized:
             save_pref("settings_active_tab", tab_index)
         
+    # Add to your dialog class, in the appropriate section:
+
     def CreateGeneralTab(self):
-        """Create the General tab content"""
-        if not self.GroupBegin(self.TAB_GENERAL, c4d.BFH_SCALEFIT, 1, 0, "General"):
+        """Create General tab content"""
+        
+        # Begin group for tab content
+        if not self.GroupBegin(self.TAB_GENERAL, c4d.BFH_SCALEFIT | c4d.BFV_SCALEFIT, 1, 0, ""):
             return False
             
-        # Model selection
-        if not self.GroupBegin(0, c4d.BFH_SCALEFIT, 2, 0, ""):
-            return False
-            
-        self.AddStaticText(0, c4d.BFH_LEFT, name="AI Model:")
-        self.AddComboBox(self.MODEL_SELECTOR, c4d.BFH_SCALEFIT)
-        
-        # Add models to dropdown
-        models = get_available_models()
-        for i, model in enumerate(models):
-            self.AddChild(self.MODEL_SELECTOR, i, f"{model['name']} - {model['description']}")
-            
-        self.GroupEnd()  # End model selection group
-        
-        # Add spacer
+        # Add a space for padding
         self.AddSeparatorH(c4d.BFH_SCALEFIT)
         
-        # Add more general settings here
+        # Add label for AI model
+        self.AddStaticText(0, c4d.BFH_LEFT, 0, 0, "AI Model:", 0)
         
-        self.GroupEnd()  # End General tab
+        # Add combobox for model selection
+        self.AddComboBox(self.MODEL_SELECTOR, c4d.BFH_SCALEFIT, 300, 0)
+        
+        # Populate models dropdown
+        models = get_available_models()
+        for i, model in enumerate(models):
+            description = f"{model['name']} - {model.get('description', '')}"
+            self.AddChild(self.MODEL_SELECTOR, i, description)
+        
+        # Add a space
+        self.AddSeparatorH(c4d.BFH_SCALEFIT)
+        
+        # Add checkbox for enabling/disabling local rules
+        self.AddCheckbox(self.RULES_ENABLE, c4d.BFH_LEFT, 0, 0, "Use local rules when available")
+        
+        # End group
+        self.GroupEnd()
+        
         return True
     
     def CreateAPITab(self):
@@ -294,6 +303,8 @@ class SettingsDialog(GeDialog):
         self.AddButton(self.BTN_SAVE_RULES, c4d.BFH_LEFT, name="Save Rules")
         self.AddButton(self.RELOAD_RULES, c4d.BFH_RIGHT, name="Reload Default Rules")
         
+        self.AddCheckbox(self.DEBUG_MODE, c4d.BFH_LEFT, 0, 0, "Enable debug mode (verbose logging)")
+        
         self.GroupEnd()  # End button row
         
         self.GroupEnd()  # End rules section
@@ -306,52 +317,79 @@ class SettingsDialog(GeDialog):
         # Mark as not initialized yet
         self._initialized = False
         
-        # Set API key
-        api_key = load_pref("api_key", "")
-        if api_key:
-            self.SetString(self.API_KEY, api_key)
+        # Load API key from preferences
+        api_key = load_pref("claude_api_key", "")
+        self.SetString(self.API_KEY, api_key)
         
         # Set model dropdown
-        model_id = load_pref("model", "claude-3-sonnet-20240229")
+        model_id = load_pref("model", "claude-4-sonnet-20240229")
         models = get_available_models()
         for i, model in enumerate(models):
             if model["id"] == model_id:
                 self.SetInt32(self.MODEL_SELECTOR, i)
                 break
         
-        # Set log path
-        log_path = os.path.expanduser("~/Documents/C4D_AI_Logs")
+        # Set rules enabled checkbox
+        rules_enabled = load_pref("use_rules", True)
+        self.SetBool(self.RULES_ENABLE, rules_enabled)
+        
+        # Load log path
+        log_path = self.get_log_path()
         self.SetString(self.LOG_PATH, log_path)
         
-        # Set Python execution toggle
-        self.SetBool(self.PYTHON_ENABLE, load_pref("enable_python", False))
-        
-        # Load rules into editor
+        # Load rules from file
         rules_text = self.load_rules_text()
         self.SetString(self.RULES_EDITOR, rules_text)
         
-        # Show active tab
+        # Load Python execution setting
+        python_enabled = load_pref("python_enabled", False)
+        self.SetBool(self.PYTHON_ENABLE, python_enabled)
+        
+        # Get active tab and show it
         active_tab = load_pref("settings_active_tab", 0)
         self.ShowTab(active_tab)
         
-        # Now we're initialized
+        debug_mode = load_pref("debug_mode", False)
+        self.SetBool(self.DEBUG_MODE, debug_mode)
+        
+        # Mark initialization as complete
         self._initialized = True
         
         return True
     
     def load_rules_text(self):
-        """Load the rules text from the file"""
+        """Load rules from file with proper comment handling"""
         try:
+            import os
+            import json
+            
+            # Get plugin directory
             base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            
+            # Load rules from prefs directory
             rules_path = os.path.join(base_dir, "prefs", "agent_rules.txt")
             
+            rules = []
             if os.path.exists(rules_path):
-                with open(rules_path, "r", encoding="utf-8") as f:
-                    return f.read()
-            else:
-                return "# Add your rules here, one JSON object per line.\n# Example:\n# {\"prompt_contains\":\"Add a cube\",\"commands\":[{\"action\":\"AddCube\",\"args\":{\"size\":200}}]}"
+                with open(rules_path, "r", encoding="utf-8", errors="replace") as f:
+                    for line in f:
+                        line = line.strip()
+                        # Skip empty lines and lines starting with '#' (comments)
+                        if not line or line.startswith('#'):
+                            continue
+                        try:
+                            rule = json.loads(line)
+                            rules.append(rule)
+                        except json.JSONDecodeError:
+                            log_line("warning", f"Invalid rule: {line}")
+            
+            self.rules = rules
+            log_line("info", f"Loaded {len(rules)} rules")
+            
+            return True
         except Exception as e:
-            return f"# Error loading rules: {str(e)}"
+            log_line("error", f"Error loading rules: {str(e)}")
+            return False
     
     def save_rules_text(self, rules_text):
         """Save the rules text to the file"""
@@ -371,126 +409,34 @@ class SettingsDialog(GeDialog):
             return False
     
     def SaveSettings(self):
-        """Save all settings"""
-        # API Key
+        """Save all settings to preferences"""
+        # Save API key
         api_key = self.GetString(self.API_KEY)
-        save_pref("api_key", api_key)
+        save_pref("claude_api_key", api_key)
         
-        # Model
+        # Save selected model
         model_index = self.GetInt32(self.MODEL_SELECTOR)
         models = get_available_models()
         if 0 <= model_index < len(models):
             save_pref("model", models[model_index]["id"])
         
-        # Python execution
-        enable_python = self.GetBool(self.PYTHON_ENABLE)
-        save_pref("enable_python", enable_python)
+        # Save rules enabled setting
+        rules_enabled = self.GetBool(self.RULES_ENABLE)
+        save_pref("use_rules", rules_enabled)
         
-        # Save rules
+        # Save Python execution setting
+        python_enabled = self.GetBool(self.PYTHON_ENABLE)
+        save_pref("python_enabled", python_enabled)
+        
+        # Save rules if modified
         rules_text = self.GetString(self.RULES_EDITOR)
         self.save_rules_text(rules_text)
         
+        debug_mode = self.GetBool(self.DEBUG_MODE)
+        save_pref("debug_mode", debug_mode)
+        
         return True
     
-    # def Command(self, id, msg):
-    #     """Handle UI commands"""
-    #     if id == self.RUN_BUTTON:
-    #         # Get the prompt text
-    #         prompt = self.GetString(self.PROMPT_TEXT)
-            
-    #         if not prompt:
-    #             c4d.gui.MessageDialog("Please enter a prompt.")
-    #             return True
-            
-    #         try:
-    #             # Set busy state for UI
-    #             self.set_busy(True)
-                
-    #             # Show progress in status bar - Cinema 4D's recommended way
-    #             c4d.StatusSetText("Processing prompt...")
-    #             c4d.StatusSetBar(10)  # Set to 10%
-                
-    #             # First check for rule matches
-    #             commands = self.agent.match_prompt(prompt)
-                
-    #             c4d.StatusSetBar(30)  # Update to 30%
-                
-    #             if commands:
-    #                 result = {
-    #                     "source": "rule",
-    #                     "completion": "Using predefined rule",
-    #                     "commands": commands
-    #                 }
-    #             else:
-    #                 # No rules matched, call AI
-    #                 c4d.StatusSetText("Calling AI...")
-    #                 log_line("info", "No rules matched, calling API")
-    #                 api_result = call_claude(prompt)
-                    
-    #                 # Create AI response object
-    #                 completion = api_result.get("completion", "")
-                    
-    #                 c4d.StatusSetBar(60)  # Update to 60%
-    #                 c4d.StatusSetText("Processing AI response...")
-                    
-    #                 # Process response for commands
-    #                 commands = self.agent.parse_commands_from_ai(completion)
-                    
-    #                 result = {
-    #                     "source": "ai",
-    #                     "completion": completion,
-    #                     "commands": commands
-    #                 }
-                
-    #             # Execute commands if any
-    #             if result.get("commands"):
-    #                 c4d.StatusSetBar(80)  # Update to 80%
-    #                 c4d.StatusSetText(f"Executing {len(result.get('commands'))} commands...")
-    #                 log_line("info", f"Executing {len(result.get('commands'))} commands")
-    #                 execute_commands(result.get("commands"))
-                
-    #             # Update UI with result
-    #             self.SetString(self.RESULT_TEXT, result.get("completion", ""))
-                
-    #             c4d.StatusSetBar(100)  # Complete
-    #             c4d.StatusSetText("Done")
-                
-    #         except Exception as e:
-    #             log_line("error", f"Error processing prompt: {str(e)}")
-    #             self.SetString(self.RESULT_TEXT, f"Error: {str(e)}")
-    #         finally:
-    #             # Always reset UI state
-    #             self.set_busy(False)
-    #             c4d.StatusClear()  # Clear the status bar
-            
-    #         return True
-            
-    #     # Handle timer events for polling
-    #     elif id == getattr(self, 'timer_id', -1):
-    #         # This is called by the timer
-    #         if hasattr(self, 'processing_finished') and self.processing_finished:
-    #             # Stop the timer
-    #             if hasattr(self, 'timer_id'):
-    #                 c4d.RemoveTimer(self.timer_id)
-    #                 del self.timer_id
-                
-    #             if self.processing_success:
-    #                 # Update result text with completion
-    #                 if hasattr(self, 'result'):
-    #                     self.SetString(self.RESULT_TEXT, self.result.get("completion", ""))
-    #             else:
-    #                 # Show error message
-    #                 if hasattr(self, 'error_message'):
-    #                     self.SetString(self.RESULT_TEXT, f"Error: {self.error_message}")
-                
-    #             # Reset UI state
-    #             self.set_busy(False)
-    #             # Force redraw
-    #             c4d.DrawViews() if hasattr(c4d, "DrawViews") else None
-            
-    #         return True
-        
-    #     return False
     
     def Command(self, id, msg):
         """Handle UI commands"""
@@ -560,13 +506,19 @@ class SettingsDialog(GeDialog):
     
     def test_api_connection(self):
         """Test the API connection with visual feedback"""
+        # Get API key from the text field
         api_key = self.GetString(self.API_KEY)
-        save_pref("api_key", api_key)
+        
+        # Save to preferences immediately
+        save_pref("claude_api_key", api_key)
         
         # Update UI to show testing state
         self.SetString(self.API_TEST_RESULT, "Testing connection...")
         self.Enable(self.BTN_TEST_API, False)
-        c4d.gui.GetInputState(c4d.BFM_INPUT_MOUSE, c4d.BFM_INPUT_CHANNEL, None)  # Force UI update
+        
+        # Fix: Create a proper BaseContainer for GetInputState
+        bc = c4d.BaseContainer()
+        c4d.gui.GetInputState(c4d.BFM_INPUT_MOUSE, c4d.BFM_INPUT_CHANNEL, bc)  # Force UI update
         
         # Test connection
         from .api_handler import test_api
@@ -622,3 +574,17 @@ class SettingsDialog(GeDialog):
             c4d.gui.MessageDialog(f"Successfully deleted {count} log file(s).")
         except Exception as e:
             c4d.gui.MessageDialog(f"Error deleting log files: {str(e)}")
+            
+    def get_log_path(self):
+        """Get the path to the log directory"""
+        try:
+            import os
+            # Get the plugin directory
+            base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            # Create logs directory if it doesn't exist
+            logs_dir = os.path.join(base_dir, "logs")
+            if not os.path.exists(logs_dir):
+                os.makedirs(logs_dir)
+            return logs_dir
+        except Exception as e:
+            return f"Error getting log path: {str(e)}"

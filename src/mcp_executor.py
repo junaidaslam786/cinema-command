@@ -107,46 +107,75 @@ class MCPExecutor:
         return False
     # Primitive commands
     def add_cube(self, doc, size=100, position=None, name=None, **kwargs):
-        """Add a cube to the scene"""
+        """Add a cube to the scene with automatic parameter discovery"""
         cube = c4d.BaseObject(c4d.Ocube)
         
         # Set name
         if name is not None:
             cube.SetName(name)
         
-        # Get data instance for parameter access
-        data = cube.GetDataInstance()
-        
-        # Use proper parameter setting approach for Cinema 4D
-        # Different versions of C4D may use different IDs, so we'll handle this safely
+        # Set cube size - try multiple approaches
         try:
-            # Set X, Y, Z dimensions
-            # PRIM_CUBE parameters might have different constants in different C4D versions
-            # Try common parameter IDs for primitives (these should be stable across versions)
-            cube_params = {
-                'LENGTH': 1001,  # X length (common ID)
-                'WIDTH': 1002,   # Y width (common ID)
-                'HEIGHT': 1003   # Z height (common ID)
-            }
+            # Method 1: Try standard C4D parameter names
+            param_attempts = [
+                # Standard parameter names
+                ('PRIM_CUBE_LEN', 'PRIM_CUBE_WID', 'PRIM_CUBE_HGT'),
+                # Alternative names
+                ('PRIM_CUBE_SUBX', 'PRIM_CUBE_SUBY', 'PRIM_CUBE_SUBZ'),
+                # Numeric IDs (common across versions)
+                (1100, 1101, 1102),
+                (1000, 1001, 1002),
+                (100, 101, 102),
+            ]
             
-            # Set all dimensions to the size parameter
-            data.SetFloat(cube_params['LENGTH'], float(size))
-            data.SetFloat(cube_params['WIDTH'], float(size))
-            data.SetFloat(cube_params['HEIGHT'], float(size))
+            success = False
+            for x_param, y_param, z_param in param_attempts:
+                try:
+                    # Try to get the parameter ID if it's a string
+                    if isinstance(x_param, str):
+                        x_id = getattr(c4d, x_param, None)
+                        y_id = getattr(c4d, y_param, None)
+                        z_id = getattr(c4d, z_param, None)
+                        
+                        if x_id is not None and y_id is not None and z_id is not None:
+                            cube[x_id] = float(size)
+                            cube[y_id] = float(size)
+                            cube[z_id] = float(size)
+                            success = True
+                            log_line("info", f"Set cube size using parameter names: {x_param}, {y_param}, {z_param}")
+                            break
+                    else:
+                        # Try numeric IDs directly
+                        cube[x_param] = float(size)
+                        cube[y_param] = float(size)
+                        cube[z_param] = float(size)
+                        success = True
+                        log_line("info", f"Set cube size using parameter IDs: {x_param}, {y_param}, {z_param}")
+                        break
+                        
+                except Exception as e:
+                    continue
             
-            log_line("info", f"Created cube with size {size}")
+            if not success:
+                log_line("warning", f"Could not set cube size - using default size")
+            else:
+                log_line("info", f"Successfully created cube with size {size}")
+                
         except Exception as e:
             log_line("error", f"Error setting cube dimensions: {str(e)}")
         
         # Set position
         if position is not None:
             if isinstance(position, list) and len(position) == 3:
-                # Create a Cinema 4D Vector for position
                 pos = c4d.Vector(float(position[0]), float(position[1]), float(position[2]))
                 cube.SetAbsPos(pos)
         
         # Add to document
         doc.InsertObject(cube)
+        
+        # Force update to refresh UI
+        c4d.EventAdd()
+        c4d.DrawViews()
         
         return cube
     
@@ -552,73 +581,6 @@ class MCPExecutor:
         c4d.CallCommand(12151)  # Frame All command
         return True
     
-    # def enable_overlay(self, doc, type="Thirds", **kwargs):
-    #     """Enable camera overlay like rule of thirds, etc."""
-    #     # Get active camera
-    #     bd = doc.GetActiveBaseDraw()
-    #     if not bd:
-    #         log_line("error", "No active viewport")
-    #         return False
-        
-    #     camera = bd.GetSceneCamera(doc)
-    #     if not camera:
-    #         log_line("error", "No active camera")
-    #         return False
-        
-    #     # Try different approaches for setting composition guides
-    #     # Method 1: Direct parameters
-    #     try:
-    #         # Try to get BaseDrawHelp
-    #         bd_help = bd.GetBdHelp()
-    #         if bd_help:
-    #             # Enable "Show Composition Helpers"
-    #             # The exact ID might differ between C4D versions
-    #             # These are some common ones to try:
-    #             ids_to_try = [
-    #                 2001, # Common ID for composition helpers
-    #                 10000, # Another possible ID
-    #                 'CAMERA_SHOW_COMPOSITION', # Symbolic name (may not work)
-    #             ]
-                
-    #             for id_val in ids_to_try:
-    #                 try:
-    #                     # Try to enable composition helpers
-    #                     bd_help[id_val] = True
-    #                     log_line("info", f"Enabled composition helpers with ID {id_val}")
-    #                     break
-    #                 except:
-    #                     continue
-    #     except:
-    #         log_line("warning", "Could not enable composition helpers via BaseDrawHelp")
-        
-    #     # Method 2: Using camera settings
-    #     try:
-    #         # Activate camera view
-    #         doc.SetActiveBaseDraw(bd)
-            
-    #         # Enable camera
-    #         bd.SetSceneCamera(camera)
-            
-    #         # Try to enable specific grid type based on requested type
-    #         if type.lower() == "thirds" or type.lower() == "ruleofthirds":
-    #             # Try some common parameter IDs for the rule of thirds
-    #             camera[1057] = True  # Common ID for displaying composition guides
-    #             camera[1058] = 0     # 0 often refers to Rule of Thirds
-            
-    #         elif type.lower() == "goldenspiral" or type.lower() == "golden":
-    #             camera[1057] = True  # Enable guides
-    #             camera[1058] = 1     # 1 often refers to Golden Spiral
-            
-    #         # Print success message
-    #         log_line("info", f"Enabled {type} overlay on camera {camera.GetName()}")
-            
-    #         # Update the viewport
-    #         c4d.EventAdd()
-    #         return True
-    #     except Exception as e:
-    #         log_line("error", f"Error enabling camera overlay: {str(e)}")
-    #         return False
-    
     def enable_overlay(self, doc, type="Thirds", **kwargs):
         """Enable camera overlay like rule of thirds, etc."""
         try:
@@ -896,6 +858,87 @@ class MCPExecutor:
             return None
         
         return search_recursive(start_obj, name)
+
+def add_light(self, doc, type="point", position=None, name=None, intensity=100, color=None, **kwargs):
+    """Add a light to the scene"""
+    try:
+        # Map light types to Cinema 4D light objects
+        light_types = {
+            "point": c4d.Olight,
+            "spot": c4d.Olight,
+            "area": c4d.Olight,
+            "infinite": c4d.Olight,
+            "sun": c4d.Olight
+        }
+        
+        # Create the light object
+        light_obj_type = light_types.get(type, c4d.Olight)
+        light = c4d.BaseObject(light_obj_type)
+        
+        if not light:
+            log_line("error", f"Failed to create light object")
+            return None
+        
+        # Set name
+        if name:
+            light.SetName(name)
+        else:
+            light.SetName(f"{type.title()}Light")
+        
+        # Set light type using parameters
+        try:
+            if type == "point":
+                light[c4d.LIGHT_TYPE] = c4d.LIGHT_TYPE_OMNI
+            elif type == "spot":
+                light[c4d.LIGHT_TYPE] = c4d.LIGHT_TYPE_SPOT
+            elif type == "area":
+                light[c4d.LIGHT_TYPE] = c4d.LIGHT_TYPE_AREA
+            elif type == "infinite":
+                light[c4d.LIGHT_TYPE] = c4d.LIGHT_TYPE_INFINITE
+            elif type == "sun":
+                light[c4d.LIGHT_TYPE] = c4d.LIGHT_TYPE_SUN
+            
+            log_line("info", f"Set light type to {type}")
+        except Exception as e:
+            log_line("warning", f"Could not set light type: {str(e)}")
+        
+        # Set intensity
+        try:
+            light[c4d.LIGHT_BRIGHTNESS] = float(intensity)
+            log_line("info", f"Set light intensity to {intensity}")
+        except Exception as e:
+            log_line("warning", f"Could not set light intensity: {str(e)}")
+        
+        # Set color if provided
+        if color and isinstance(color, list) and len(color) == 3:
+            try:
+                color_vector = c4d.Vector(float(color[0]), float(color[1]), float(color[2]))
+                light[c4d.LIGHT_COLOR] = color_vector
+                log_line("info", f"Set light color to {color}")
+            except Exception as e:
+                log_line("warning", f"Could not set light color: {str(e)}")
+        
+        # Set position
+        if position and isinstance(position, list) and len(position) == 3:
+            try:
+                pos = c4d.Vector(float(position[0]), float(position[1]), float(position[2]))
+                light.SetAbsPos(pos)
+                log_line("info", f"Set light position to {position}")
+            except Exception as e:
+                log_line("warning", f"Could not set light position: {str(e)}")
+        
+        # Add to document
+        doc.InsertObject(light)
+        
+        # Update document
+        c4d.EventAdd()
+        
+        log_line("info", f"Successfully created {type} light: {light.GetName()}")
+        return light
+        
+    except Exception as e:
+        log_line("error", f"Error creating light: {str(e)}")
+        return None
 
 # Create a single instance to be used by the execute_commands function
 _mcp = MCPExecutor()
